@@ -48,3 +48,12 @@ class SoulseekBackend:
         self.download_dir.mkdir(parents=True, exist_ok=True)
         if self.client is not None:
             self.client.settings.shares.download = str(self.download_dir)
+
+    async def set_credentials(self, username: str, password: str) -> None:
+        was_started = self.client is not None
+        if was_started:
+            await self.close()
+        self.username = username
+        self.password = password
+        if was_started:
+            await self.start()

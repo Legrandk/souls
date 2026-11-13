@@ -6,7 +6,7 @@ import time
 from concurrent.futures import Future
 from pathlib import Path
 
-from .config import save_config
+from .config import get_password, save_config, set_password
 from .models import SearchHit, TransferView, format_size, format_transfer
 
 
@@ -53,17 +53,33 @@ def _draw(
     window.refresh()
 
 
-def _draw_settings(window, status: str, download_dir: str, editing: bool, value: str) -> None:
+def _draw_settings(
+    window,
+    status: str,
+    username: str,
+    password: str,
+    download_dir: str,
+    selected: int,
+    editing: bool,
+    value: str,
+) -> None:
     window.erase()
     _, width = window.getmaxyx()
     _write(window, 0, 0, f"Configuration  |  {status}", width, curses.A_BOLD)
-    _write(window, 2, 0, "Download directory", width, curses.A_BOLD)
-    _write(window, 3, 2, value if editing else download_dir, width - 2)
+    values = [username, "*" * len(value) if editing and selected == 1 else "stored in Keychain (hidden)", download_dir]
+    if editing and selected != 1:
+        values[selected] = value
+    labels = ["Soulseek username", "Soulseek password", "Download directory"]
+    for index, (label, field_value) in enumerate(zip(labels, values)):
+        row = 2 + index * 2
+        prefix = "> " if index == selected else "  "
+        _write(window, row, 0, f"{prefix}{label}", width, curses.A_BOLD if index == selected else 0)
+        _write(window, row + 1, 2, field_value, width - 2)
     if editing:
-        _write(window, 5, 0, "Type a folder path, Enter to save, Esc to cancel", width)
+        _write(window, 9, 0, "Type a value, Enter to apply, Esc to cancel", width)
     else:
-        _write(window, 5, 0, "Enter/e edit   Esc return", width)
-        _write(window, 7, 0, "New settings can be added to this screen.", width)
+        _write(window, 9, 0, "↑/↓ select   Enter/e edit   s save account and reconnect   Esc return", width)
+        _write(window, 11, 0, "Password changes are stored in the system Keychain.", width)
     window.refresh()
 
 
@@ -74,6 +90,28 @@ async def _save_download_dir(backend, value: str) -> Path:
     await backend.set_download_dir(path)
     save_config(backend.username, path)
     return path
+
+
+async def _save_credentials(backend, username: str, password: str) -> tuple[str, bool]:
+    username = username.strip()
+    if not username:
+        raise ValueError("Soulseek username cannot be empty")
+    if not password:
+        try:
+            password = get_password(username) or ""
+        except Exception:
+            password = ""
+    if not password:
+        raise ValueError("Enter a password for this username")
+
+    save_config(username, backend.download_dir)
+    password_saved = True
+    try:
+        set_password(username, password)
+    except Exception:
+        password_saved = False
+    await backend.set_credentials(username, password)
+    return username, password_saved
 
 
 def run_curses(window, backend, loop: asyncio.AbstractEventLoop) -> None:
@@ -99,6 +137,10 @@ def run_curses(window, backend, loop: asyncio.AbstractEventLoop) -> None:
     settings_editing = False
     settings_value = str(backend.download_dir)
     settings_future: Future | None = None
+    account_future: Future | None = None
+    settings_username = backend.username
+    settings_password = ""
+    settings_selected = 0
 
     start_future = asyncio.run_coroutine_threadsafe(backend.start(), loop)
     while not stopping:
@@ -158,9 +200,28 @@ def run_curses(window, backend, loop: asyncio.AbstractEventLoop) -> None:
             except Exception as exc:
                 status = f"Could not save setting: {exc}"
             settings_future = None
+        if account_future is not None and account_future.done():
+            try:
+                settings_username, password_saved = account_future.result()
+                settings_password = ""
+                connected = True
+                status = "Credentials saved; connected" if password_saved else "Connected; password not saved to Keychain"
+            except Exception as exc:
+                connected = False
+                status = f"Login failed: {exc}"
+            account_future = None
 
         if screen == "settings":
-            _draw_settings(window, status, str(backend.download_dir), settings_editing, settings_value)
+            _draw_settings(
+                window,
+                status,
+                settings_username,
+                settings_password,
+                str(backend.download_dir),
+                settings_selected,
+                settings_editing,
+                settings_value,
+            )
         else:
             _draw(window, status, query, input_mode, hits, selected, transfers, scroll)
         try:
@@ -173,7 +234,15 @@ def run_curses(window, backend, loop: asyncio.AbstractEventLoop) -> None:
             continue
         if screen == "settings" and settings_editing:
             if key in (10, 13):
-                if settings_value.strip():
+                if settings_selected == 0:
+                    settings_username = settings_value.strip()
+                    status = "Username updated; save account to reconnect"
+                    settings_editing = False
+                elif settings_selected == 1:
+                    settings_password = settings_value
+                    status = "Password updated; save account to reconnect"
+                    settings_editing = False
+                elif settings_value.strip():
                     settings_future = asyncio.run_coroutine_threadsafe(
                         _save_download_dir(backend, settings_value.strip()), loop
                     )
@@ -183,7 +252,7 @@ def run_curses(window, backend, loop: asyncio.AbstractEventLoop) -> None:
                     status = "Download directory cannot be empty"
             elif key == 27:
                 settings_editing = False
-                settings_value = str(backend.download_dir)
+                settings_value = ""
             elif key in (curses.KEY_BACKSPACE, 8, 127):
                 settings_value = settings_value[:-1]
             elif 32 <= key <= 0x10FFFF and chr(key).isprintable() and len(settings_value) < 500:
@@ -216,9 +285,28 @@ def run_curses(window, backend, loop: asyncio.AbstractEventLoop) -> None:
         elif screen == "settings" and key == 27:
             screen = "main"
             status = "Connected" if connected else status
+        elif screen == "settings" and key in (curses.KEY_UP, ord("k")):
+            settings_selected = max(0, settings_selected - 1)
+        elif screen == "settings" and key in (curses.KEY_DOWN, ord("j")):
+            settings_selected = min(2, settings_selected + 1)
         elif screen == "settings" and key in (10, 13, ord("e"), ord("E")) and settings_future is None:
             settings_editing = True
-            settings_value = str(backend.download_dir)
+            settings_value = (
+                settings_username
+                if settings_selected == 0
+                else str(backend.download_dir) if settings_selected == 2 else ""
+            )
+        elif screen == "settings" and key in (ord("s"), ord("S")) and account_future is None:
+            if start_future is not None:
+                status = "Wait for the current connection attempt to finish"
+            else:
+                connected = False
+                request = None
+                hits = []
+                status = "Saving credentials and reconnecting..."
+                account_future = asyncio.run_coroutine_threadsafe(
+                    _save_credentials(backend, settings_username, settings_password), loop
+                )
         elif key == ord("/"):
             if screen == "main" and connected and search_future is None:
                 input_mode = True

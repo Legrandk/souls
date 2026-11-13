@@ -1,13 +1,25 @@
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from soulseek_tui.backend import SoulseekBackend
 from soulseek_tui.models import SearchHit, TransferView
 
 
 class BackendTests(unittest.IsolatedAsyncioTestCase):
+    async def test_changing_credentials_restarts_client(self):
+        backend = SoulseekBackend("old-user", "old-pass", Path("/tmp/downloads"))
+        backend.client = object()
+        backend.close = AsyncMock()
+        backend.start = AsyncMock()
+
+        await backend.set_credentials("new-user", "new-pass")
+
+        self.assertEqual((backend.username, backend.password), ("new-user", "new-pass"))
+        backend.close.assert_awaited_once_with()
+        backend.start.assert_awaited_once_with()
+
     async def test_download_directory_updates_current_client_and_creates_folder(self):
         with patch("pathlib.Path.mkdir") as mkdir:
             backend = SoulseekBackend("self", "secret", Path("/tmp/old"))

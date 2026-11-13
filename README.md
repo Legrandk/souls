@@ -32,14 +32,14 @@ At first launch, enter your Soulseek username and password and choose a download
 ## Controls
 
 - `/` — start a network search
-- `c` — open configuration and edit the download directory
+- `c` — open configuration to edit account details and the download directory
 - Up/Down or `j`/`k` — select a result
 - Enter or `d` — queue the selected file
 - `q` — quit
 
 Search results appear above the live downloads list. The downloads list shows transfer state, bytes, percent complete, speed, peer, and remote path.
 
-The configuration screen currently saves the download directory and applies it to newly queued downloads immediately. Existing transfers keep their current destination.
+The configuration screen saves the Soulseek username and password and reconnects with them. The username is stored in the app config; the password is stored in the system Keychain when available. The download directory is applied to newly queued downloads immediately. Existing transfers keep their current destination.
 
 Library warnings are written to `soulseek-tui.log` in the app configuration directory so they do not overwrite the terminal interface. On macOS, this is `~/Library/Application Support/soulseek-tui/soulseek-tui.log`.
 
