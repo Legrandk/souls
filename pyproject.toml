@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soulseek-tui"
+version = "0.1.0"
+description = "A minimal terminal client for Soulseek"
+requires-python = ">=3.10"
+dependencies = [
+    "aioslsk>=1.6,<2",
+    "keyring>=25,<27",
+]
+
+[project.scripts]
+soulseek-tui = "soulseek_tui.app:main"
+
+[tool.setuptools.packages.find]
+include = ["soulseek_tui*"]
